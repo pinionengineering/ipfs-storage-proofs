@@ -6,6 +6,8 @@ package ipfsproof
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"sort"
 
@@ -109,6 +111,63 @@ func (cl *ChallengedList) Block(id []byte) ([]byte, error) {
 
 func (cl *ChallengedList) SetBlock(_ []byte, _ []byte) error {
 	return fmt.Errorf("ipfsproof: ChallengedList is read-only")
+}
+
+// MarshalJSON encodes a TagList as JSON with base64-encoded tags and string CIDs.
+func (tl TagList) MarshalJSON() ([]byte, error) {
+	type wireBlock struct {
+		Tag string `json:"tag"` // base64-encoded line.Tag bytes
+		CID string `json:"cid"`
+	}
+	type wire struct {
+		Root string      `json:"root"`
+		Tags []wireBlock `json:"tags"`
+	}
+	w := wire{
+		Root: tl.Root.String(),
+		Tags: make([]wireBlock, len(tl.Tags)),
+	}
+	for i, tb := range tl.Tags {
+		w.Tags[i] = wireBlock{
+			Tag: base64.StdEncoding.EncodeToString([]byte(tb.Tag)),
+			CID: tb.Cid.String(),
+		}
+	}
+	return json.Marshal(w)
+}
+
+// UnmarshalJSON decodes a TagList from the JSON format produced by MarshalJSON.
+func (tl *TagList) UnmarshalJSON(data []byte) error {
+	type wireBlock struct {
+		Tag string `json:"tag"`
+		CID string `json:"cid"`
+	}
+	type wire struct {
+		Root string      `json:"root"`
+		Tags []wireBlock `json:"tags"`
+	}
+	var w wire
+	if err := json.Unmarshal(data, &w); err != nil {
+		return err
+	}
+	root, err := cid.Decode(w.Root)
+	if err != nil {
+		return fmt.Errorf("ipfsproof: decode root CID: %w", err)
+	}
+	tl.Root = root
+	tl.Tags = make([]TagBlock, len(w.Tags))
+	for i, wb := range w.Tags {
+		tagBytes, err := base64.StdEncoding.DecodeString(wb.Tag)
+		if err != nil {
+			return fmt.Errorf("ipfsproof: decode tag %d: %w", i, err)
+		}
+		c, err := cid.Decode(wb.CID)
+		if err != nil {
+			return fmt.Errorf("ipfsproof: decode block CID %d: %w", i, err)
+		}
+		tl.Tags[i] = TagBlock{Tag: line.Tag(tagBytes), Cid: c}
+	}
+	return nil
 }
 
 // TagRoot walks the IPFS DAG rooted at root, tags all reachable blocks using

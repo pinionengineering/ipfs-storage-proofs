@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"testing"
 
 	"github.com/ipfs/boxo/ipld/merkledag"
@@ -28,6 +29,45 @@ func (t *mockTagger) TagBlocks(store blocks.BlockStore) ([]line.Tag, error) {
 		tags[i] = line.Tag(h[:])
 	}
 	return tags, nil
+}
+
+func TestTagList_JSONRoundTrip(t *testing.T) {
+	root, _ := cid.Decode("bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi")
+	c1, _ := cid.Decode("bafybeif2pall7dybz7vecqka3zo24irdwabwdi4wc55jznaq75q7eaavvu")
+	c2, _ := cid.Decode("bafybeiemxf5abjwjbikoz4mc3a3dla6ual3jsgpdr4cjr3oz3evfyavhwq")
+
+	original := TagList{
+		Root: root,
+		Tags: []TagBlock{
+			{Tag: line.Tag("tag-bytes-1"), Cid: c1},
+			{Tag: line.Tag("tag-bytes-2"), Cid: c2},
+		},
+	}
+
+	data, err := json.Marshal(original)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var got TagList
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatal(err)
+	}
+
+	if got.Root != original.Root {
+		t.Errorf("root: got %s, want %s", got.Root, original.Root)
+	}
+	if len(got.Tags) != len(original.Tags) {
+		t.Fatalf("tag count: got %d, want %d", len(got.Tags), len(original.Tags))
+	}
+	for i, tb := range original.Tags {
+		if got.Tags[i].Cid != tb.Cid {
+			t.Errorf("tag %d CID: got %s, want %s", i, got.Tags[i].Cid, tb.Cid)
+		}
+		if !bytes.Equal(got.Tags[i].Tag, tb.Tag) {
+			t.Errorf("tag %d bytes mismatch", i)
+		}
+	}
 }
 
 func TestTagRoot_SimpleDAG(t *testing.T) {
