@@ -97,6 +97,98 @@ proof, err := prover.Prove(chal, store)
 
 ---
 
+## Full Integration Example
+
+The snippet below shows a single-root setup and repeating audit loop using `sw-pub`.
+Replace `api` with any `format.NodeGetter` (kubo RPC client, in-process node, etc.).
+
+```go
+package main
+
+import (
+    "context"
+    "fmt"
+    "log"
+    "time"
+
+    ipfsproof "github.com/pinionengineering/ipfs-storage-proofs"
+    "github.com/pinionengineering/storage-proofs/line/swpub"
+    "github.com/ipfs/go-cid"
+    httpapi "github.com/ipfs/go-ipfs-http-client"
+)
+
+func main() {
+    ctx := context.Background()
+
+    // Connect to a running IPFS node.
+    api, err := httpapi.NewLocalApi()
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    root, _ := cid.Decode("bafybeigdyrzt...")
+
+    // ── Setup (one-time) ──────────────────────────────────────────────────
+
+    tagger := swpub.NewTagger()
+
+    // Walk the DAG rooted at 'root', sort blocks by CID bytes, tag each one.
+    tagList, err := ipfsproof.TagRoot(ctx, api.Dag(), root, tagger)
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    // Split setup material into client side and prover (server) side.
+    clientSetup, _ := tagger.ClientSetup()
+    proverSetup, _ := tagger.ProverSetup()
+
+    challenger, _ := swpub.NewChallengerFactory().NewChallenger(clientSetup, 20)
+
+    // The prover side would normally run on the server, initialized from proverSetup.
+    prover, _ := swpub.NewProverFactory().NewProver(proverSetup, nil)
+
+    // ── Audit loop ────────────────────────────────────────────────────────
+
+    blockIDs := make([][]byte, len(tagList.Tags))
+    for i, tb := range tagList.Tags {
+        blockIDs[i] = tb.Cid.Bytes()
+    }
+
+    for round := 1; ; round++ {
+        // Generate a challenge locally; Validator holds this round's secret.
+        chal, validator, _ := challenger.Challenge(blockIDs)
+
+        // Build a live BlockStore from the IPFS node for this challenge.
+        store, err := ipfsproof.NewChallengedList(ctx, api.Dag(), []*ipfsproof.TagList{tagList}, []cid.Cid{root})
+        if err != nil {
+            log.Fatalf("round %d: failed to build challenged list: %v", round, err)
+        }
+
+        // Prove: server fetches the challenged blocks and computes the proof.
+        proof, err := prover.Prove(chal, store)
+        if err != nil {
+            log.Fatalf("round %d: prove failed: %v", round, err)
+        }
+
+        // Verify: client checks the proof locally, no network required.
+        ok, err := validator.Verify(chal, proof)
+        if err != nil || !ok {
+            log.Fatalf("round %d: VERIFICATION FAILED", round)
+        }
+        fmt.Printf("round %d: OK\n", round)
+
+        time.Sleep(10 * time.Second)
+    }
+}
+```
+
+In a real deployment the challenger and prover run on separate machines. The
+challenge bytes travel from challenger to prover over HTTP (e.g. via
+`/prover/prove`); the proof bytes travel back. Both local steps (generate
+challenge, verify proof) require no network.
+
+---
+
 ## Dependencies
 
 - [storage-proofs](https://github.com/pinionengineering/storage-proofs) — protocol implementations (PDP: ateniese, erway; POR: sw, bjo)
