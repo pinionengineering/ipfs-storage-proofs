@@ -170,17 +170,19 @@ func (tl *TagList) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// TagRoot walks the IPFS DAG rooted at root, tags all reachable blocks using
-// tagger, and returns a TagList with blocks ordered by CID bytes.
-// getter is typically the Dag() service of a kubo RPC or in-process API client.
-func TagRoot(ctx context.Context, getter format.NodeGetter, root cid.Cid, tagger line.Tagger) (*TagList, error) {
-	type entry struct {
-		c cid.Cid
-		b []byte
-	}
+// dagEntry is one block collected during a DAG walk, shared by TagRoot and
+// TagRootChunked.
+type dagEntry struct {
+	c cid.Cid
+	b []byte
+}
 
+// walkDAG walks the IPFS DAG rooted at root and returns all reachable blocks,
+// sorted by CID bytes. Shared by TagRoot and TagRootChunked so both consume
+// an identical, stable block ordering.
+func walkDAG(ctx context.Context, getter format.NodeGetter, root cid.Cid) ([]dagEntry, error) {
 	seen := make(map[cid.Cid]bool)
-	var collected []entry
+	var collected []dagEntry
 
 	var walk func(c cid.Cid) error
 	walk = func(c cid.Cid) error {
@@ -193,7 +195,7 @@ func TagRoot(ctx context.Context, getter format.NodeGetter, root cid.Cid, tagger
 		if err != nil {
 			return fmt.Errorf("ipfsproof: get %s: %w", c, err)
 		}
-		collected = append(collected, entry{c: c, b: node.RawData()})
+		collected = append(collected, dagEntry{c: c, b: node.RawData()})
 
 		for _, link := range node.Links() {
 			if err := walk(link.Cid); err != nil {
@@ -210,6 +212,17 @@ func TagRoot(ctx context.Context, getter format.NodeGetter, root cid.Cid, tagger
 	sort.Slice(collected, func(i, j int) bool {
 		return bytes.Compare(collected[i].c.Bytes(), collected[j].c.Bytes()) < 0
 	})
+	return collected, nil
+}
+
+// TagRoot walks the IPFS DAG rooted at root, tags all reachable blocks using
+// tagger, and returns a TagList with blocks ordered by CID bytes.
+// getter is typically the Dag() service of a kubo RPC or in-process API client.
+func TagRoot(ctx context.Context, getter format.NodeGetter, root cid.Cid, tagger line.Tagger) (*TagList, error) {
+	collected, err := walkDAG(ctx, getter, root)
+	if err != nil {
+		return nil, err
+	}
 
 	rawBlocks := make([][]byte, len(collected))
 	sortedCIDs := make([]cid.Cid, len(collected))

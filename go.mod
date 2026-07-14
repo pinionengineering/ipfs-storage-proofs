@@ -6,11 +6,13 @@ require (
 	github.com/ipfs/boxo v0.41.0
 	github.com/ipfs/go-cid v0.6.1
 	github.com/ipfs/go-ipld-format v0.6.3
-	github.com/pinionengineering/storage-proofs v0.0.0-20260701000003-65301d7ef68f
+	github.com/pinionengineering/storage-proofs v0.0.0-20260714233023-e6a5bd65bf53
 )
 
 require (
+	github.com/bits-and-blooms/bitset v1.24.4 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
+	github.com/consensys/gnark-crypto v0.20.1 // indirect
 	github.com/gammazero/chanqueue v1.1.2 // indirect
 	github.com/gammazero/deque v1.2.1 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
@@ -50,3 +52,5 @@ require (
 	google.golang.org/protobuf v1.36.11 // indirect
 	lukechampine.com/blake3 v1.4.1 // indirect
 )
+
+replace github.com/pinionengineering/storage-proofs => ../storage-proofs
