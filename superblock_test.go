@@ -18,6 +18,15 @@ import (
 
 const testSuperBlockSize = 8
 
+// chunkedBlockSize and chunkedSectorsPerBlock configure SW-Priv/SW-Pub for
+// TestChunkedRoundTrip and TestChunkedExtraction — the same value passed to
+// both spec.NewTagger and the super-block virtualization layer, matching how
+// a real caller must keep the two in agreement.
+const (
+	chunkedBlockSize       = 1024
+	chunkedSectorsPerBlock = 64
+)
+
 // stubTagger is a trivial line.Tagger used to test the chunking/manifest
 // mechanics in isolation from any real crypto: each tag is just a copy of
 // the super-block's own (already zero-padded) bytes.
@@ -172,34 +181,29 @@ func schemeForTest(t *testing.T, name string) capability.SchemeSpec {
 }
 
 // TestChunkedRoundTrip drives a full tag -> challenge -> respond -> verify
-// cycle through the real SW-Priv/SW-Pub machinery via the super-block layer,
-// using each scheme's actual production BlockSize. chalSize is picked with a
-// generous margin over the big real block's own super-block count (covering
-// the small block and the DAG root's own node too, whatever their sizes
-// happen to encode to), so MakeChallenge's L gets capped down to exactly N
-// and every round deterministically covers every super-block — including
-// every one of the big real block's several super-blocks, in every single
-// round, not just probabilistically. The margin is verified, not assumed.
+// cycle through the real SW-Priv/SW-Pub machinery via the super-block layer.
+// buildTwoBlockDAG's "big" fixture spans several super-blocks with a partial
+// last one; chalSize is set higher than the total super-block count so
+// MakeChallenge (which caps its challenge size down to the total when asked
+// for more) always covers every super-block, making each round's result
+// deterministic instead of a probabilistic sample.
 func TestChunkedRoundTrip(t *testing.T) {
 	for _, name := range []string{"SW-Priv", "SW-Pub"} {
 		name := name
 		t.Run(name, func(t *testing.T) {
 			ctx := context.Background()
 			spec := schemeForTest(t, name)
-			if spec.BlockSize == 0 {
-				t.Fatalf("scheme %q has no BlockSize configured", name)
-			}
 
-			dag, rootNode, big, _ := buildTwoBlockDAG(t, spec.BlockSize)
-			bigSB := (len(big) + spec.BlockSize - 1) / spec.BlockSize
-			chalSizeMargin := bigSB + 5 // headroom for the small block + the DAG root's own node
+			dag, rootNode, big, _ := buildTwoBlockDAG(t, chunkedBlockSize)
+			bigSB := (len(big) + chunkedBlockSize - 1) / chunkedBlockSize
+			chalSizeMargin := bigSB + 5 // headroom for the small fixture block + the DAG root's own node
 
-			tagger, err := spec.NewTagger(512, chalSizeMargin)
+			tagger, err := spec.NewTagger(512, chalSizeMargin, chunkedBlockSize, chunkedSectorsPerBlock)
 			if err != nil {
 				t.Fatalf("NewTagger: %v", err)
 			}
 
-			tl, err := ipfsproof.TagRootChunked(ctx, dag, rootNode.Cid(), tagger, spec.BlockSize)
+			tl, err := ipfsproof.TagRootChunked(ctx, dag, rootNode.Cid(), tagger, chunkedBlockSize)
 			if err != nil {
 				t.Fatalf("TagRootChunked: %v", err)
 			}
@@ -217,7 +221,7 @@ func TestChunkedRoundTrip(t *testing.T) {
 				t.Fatalf("ClientSetup: %v", err)
 			}
 
-			cl, err := ipfsproof.NewChunkedChallengedList(ctx, dag, []*ipfsproof.ChunkedTagList{tl}, []cid.Cid{rootNode.Cid()}, spec.BlockSize)
+			cl, err := ipfsproof.NewChunkedChallengedList(ctx, dag, []*ipfsproof.ChunkedTagList{tl}, []cid.Cid{rootNode.Cid()}, chunkedBlockSize)
 			if err != nil {
 				t.Fatalf("NewChunkedChallengedList: %v", err)
 			}
@@ -268,15 +272,15 @@ func TestChunkedExtraction(t *testing.T) {
 			ctx := context.Background()
 			spec := schemeForTest(t, name)
 
-			dag, rootNode, big, small := buildTwoBlockDAG(t, spec.BlockSize)
-			bigSB := (len(big) + spec.BlockSize - 1) / spec.BlockSize
+			dag, rootNode, big, small := buildTwoBlockDAG(t, chunkedBlockSize)
+			bigSB := (len(big) + chunkedBlockSize - 1) / chunkedBlockSize
 			chalSizeMargin := bigSB + 5 // headroom for the small block + the DAG root's own node
 
-			tagger, err := spec.NewTagger(512, chalSizeMargin)
+			tagger, err := spec.NewTagger(512, chalSizeMargin, chunkedBlockSize, chunkedSectorsPerBlock)
 			if err != nil {
 				t.Fatalf("NewTagger: %v", err)
 			}
-			tl, err := ipfsproof.TagRootChunked(ctx, dag, rootNode.Cid(), tagger, spec.BlockSize)
+			tl, err := ipfsproof.TagRootChunked(ctx, dag, rootNode.Cid(), tagger, chunkedBlockSize)
 			if err != nil {
 				t.Fatalf("TagRootChunked: %v", err)
 			}
@@ -302,7 +306,7 @@ func TestChunkedExtraction(t *testing.T) {
 			if err != nil {
 				t.Fatalf("ClientSetup: %v", err)
 			}
-			cl, err := ipfsproof.NewChunkedChallengedList(ctx, dag, []*ipfsproof.ChunkedTagList{tl}, []cid.Cid{rootNode.Cid()}, spec.BlockSize)
+			cl, err := ipfsproof.NewChunkedChallengedList(ctx, dag, []*ipfsproof.ChunkedTagList{tl}, []cid.Cid{rootNode.Cid()}, chunkedBlockSize)
 			if err != nil {
 				t.Fatalf("NewChunkedChallengedList: %v", err)
 			}
@@ -347,7 +351,7 @@ func TestChunkedExtraction(t *testing.T) {
 				t.Fatalf("did not converge within %d rounds", maxRounds)
 			}
 
-			prefix := prefixSums(tl.Blocks, spec.BlockSize)
+			prefix := prefixSums(tl.Blocks, chunkedBlockSize)
 			bigIdx := findBySize(tl.Blocks, len(big))
 			smallIdx := findBySize(tl.Blocks, len(small))
 			if bigIdx == -1 || smallIdx == -1 {
