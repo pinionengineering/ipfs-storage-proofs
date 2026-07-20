@@ -154,8 +154,8 @@ func TestNewChunkedPartitionStore_MatchesTagRootChunkedWhenConcatenated(t *testi
 	// leaf2's super-blocks, not on a real-block boundary, which is exactly
 	// the case this store type exists to handle.
 	mid := total / 2
-	store1 := NewChunkedPartitionStore(ctx, dag, root.Cid(), manifest, superBlockSize, 0, mid)
-	store2 := NewChunkedPartitionStore(ctx, dag, root.Cid(), manifest, superBlockSize, mid, total)
+	store1 := NewChunkedPartitionStore(ctx, dag, root.Cid(), manifest, superBlockSize, 0, 0, mid)
+	store2 := NewChunkedPartitionStore(ctx, dag, root.Cid(), manifest, superBlockSize, 0, mid, total)
 
 	tags1, err := (&mockTagger{}).TagBlocks(store1)
 	if err != nil {

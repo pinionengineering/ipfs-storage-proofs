@@ -15,18 +15,31 @@ import (
 	"github.com/pinionengineering/storage-proofs/line"
 )
 
-// mockTagger tags each block with SHA-256 of its raw bytes.
+// mockTagger tags each block with SHA-256 of its id concatenated with its
+// raw bytes. Deliberately id-sensitive, not just bytes-sensitive: a
+// bytes-only mock can't distinguish a super-block resolved via the correct
+// global index from one resolved via a wrong-but-still-in-range local
+// index (both fetch identical bytes, since resolution to a real block
+// doesn't depend on which numbering scheme produced the id) — real
+// Shacham-Waters-style tags do embed the id cryptographically, so a test
+// tagger that ignores id can pass while missing an id-correctness bug a
+// real protocol would catch. See ResolveSuperBlockRange/
+// NewChunkedPartitionStore's globalOffset parameter, added after exactly
+// this class of bug slipped past a bytes-only version of this mock.
 type mockTagger struct{}
 
 func (t *mockTagger) TagBlocks(store blocks.BlockStore) ([]line.Tag, error) {
+	ids := store.IDs()
 	tags := make([]line.Tag, store.Len())
 	for i := range store.Len() {
 		b, err := blocks.BlockAt(store, i)
 		if err != nil {
 			return nil, err
 		}
-		h := sha256.Sum256(b)
-		tags[i] = line.Tag(h[:])
+		h := sha256.New()
+		h.Write(ids[i])
+		h.Write(b)
+		tags[i] = line.Tag(h.Sum(nil))
 	}
 	return tags, nil
 }
@@ -109,7 +122,8 @@ func TestTagRoot_SimpleDAG(t *testing.T) {
 		}
 	}
 
-	// Each tag must match SHA-256 of the node's RawData.
+	// Each tag must match mockTagger's SHA-256(id || bytes) — for the
+	// non-chunked path, id is the block's own CID bytes.
 	nodesByCID := map[cid.Cid]format.Node{
 		root.Cid():  root,
 		leaf1.Cid(): leaf1,
@@ -121,8 +135,10 @@ func TestTagRoot_SimpleDAG(t *testing.T) {
 			t.Errorf("unexpected CID in TagList: %s", tb.Cid)
 			continue
 		}
-		h := sha256.Sum256(n.RawData())
-		if !bytes.Equal(tb.Tag, h[:]) {
+		h := sha256.New()
+		h.Write(tb.Cid.Bytes())
+		h.Write(n.RawData())
+		if !bytes.Equal(tb.Tag, h.Sum(nil)) {
 			t.Errorf("tag mismatch for CID %s", tb.Cid)
 		}
 	}

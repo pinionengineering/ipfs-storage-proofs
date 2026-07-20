@@ -172,8 +172,19 @@ func NewPartitionStore(ctx context.Context, getter format.NodeGetter, manifest [
 // same superBlockStore/lazyByteSource machinery NewChunkedChallengedList
 // uses at prove time — the chunked (SW-Priv/SW-Pub) partitioning path, where
 // a partition's index range can cut across real-block boundaries.
-func NewChunkedPartitionStore(ctx context.Context, getter format.NodeGetter, root cid.Cid, manifest []RealBlockInfo, superBlockSize, start, end int) blocks.BlockStore {
-	m := newRootManifest(root, manifest, superBlockSize)
+//
+// start and end are always global super-block indices (into the root's
+// whole, unsliced index space), same as NewPartitionStore's — regardless of
+// whether manifest is the whole file's manifest or just a slice of it.
+// globalOffset must be the super-block index manifest[0] actually starts at
+// (0 if manifest is the whole file; see ResolveSuperBlockRange for how a
+// caller working from a partial slice computes this). This is required —
+// not just a memory optimization — because unlike a real block's CID, a
+// super-block's id embeds its index directly, so tags computed from a
+// slice without the correct global offset would carry the wrong id and
+// never verify.
+func NewChunkedPartitionStore(ctx context.Context, getter format.NodeGetter, root cid.Cid, manifest []RealBlockInfo, superBlockSize, globalOffset, start, end int) blocks.BlockStore {
+	m := newRootManifestWithOffset(root, manifest, superBlockSize, globalOffset)
 	inner := newSuperBlockStore([]*rootManifest{m}, newLazyByteSource(ctx, getter), superBlockSize)
-	return &rangeStore{inner: inner, start: start, end: end}
+	return &rangeStore{inner: inner, start: start - globalOffset, end: end - globalOffset}
 }

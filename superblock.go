@@ -157,33 +157,98 @@ func (tl *ChunkedTagList) UnmarshalJSON(data []byte) error {
 }
 
 // rootManifest is the prefix-summed index for one root's real-block list,
-// letting a local super-block index be resolved to (real block, byte range)
-// in O(log k) for k real blocks, without needing the total super-block
-// count to be recomputed on every lookup.
+// letting a super-block index be resolved to (real block, byte range) in
+// O(log k) for k real blocks, without needing the total super-block count
+// to be recomputed on every lookup.
+//
+// globalOffset is the super-block index blocks[0] starts at in the root's
+// full (unsliced) index space — 0 for a rootManifest built over the whole
+// manifest (the common case: TagRootChunked, NewChunkedChallengedList).
+// Non-zero only when blocks is a partial slice of a larger manifest (see
+// NewChunkedPartitionStore) — resolveIndex/resolve and every id this
+// manifest's super-block store emits work in *global* index terms
+// regardless, translating to/from local array positions internally. This
+// matters because, unlike a real block's CID, a super-block's id
+// (SuperBlockID) is position-addressed, not content-addressed — it embeds
+// the super-block's index directly as part of what gets cryptographically
+// tagged, so a partition worker given only a slice of the manifest must
+// still generate and resolve ids using each super-block's true index in
+// the whole file, not its position within the slice, or its tags won't
+// match what the challenger/verifier — which only ever deal in global
+// indices — expect.
 type rootManifest struct {
-	root   cid.Cid
-	blocks []RealBlockInfo
-	prefix []int // len(blocks)+1; prefix[i] = super-blocks before real block i
+	root         cid.Cid
+	blocks       []RealBlockInfo
+	prefix       []int // len(blocks)+1; prefix[i] = super-blocks before blocks[i], relative to this manifest's own slice
+	globalOffset int
 }
 
 func newRootManifest(root cid.Cid, realBlocks []RealBlockInfo, superBlockSize int) *rootManifest {
+	return newRootManifestWithOffset(root, realBlocks, superBlockSize, 0)
+}
+
+func newRootManifestWithOffset(root cid.Cid, realBlocks []RealBlockInfo, superBlockSize, globalOffset int) *rootManifest {
 	prefix := make([]int, len(realBlocks)+1)
 	for i, b := range realBlocks {
 		prefix[i+1] = prefix[i] + superBlockCount(b.Size, superBlockSize)
 	}
-	return &rootManifest{root: root, blocks: realBlocks, prefix: prefix}
+	return &rootManifest{root: root, blocks: realBlocks, prefix: prefix, globalOffset: globalOffset}
 }
 
+// total returns how many super-blocks this manifest's own slice covers —
+// not the whole file's total when globalOffset != 0.
 func (m *rootManifest) total() int { return m.prefix[len(m.blocks)] }
 
-// resolve maps a local super-block index to the real block it falls in and
-// its zero-based super-block offset within that real block.
-func (m *rootManifest) resolve(localIndex int) (RealBlockInfo, int, error) {
+// resolveIndex maps a global super-block index to its real-block index
+// (into m.blocks) and zero-based super-block offset within that real block.
+func (m *rootManifest) resolveIndex(globalIndex int) (int, int, error) {
+	localIndex := globalIndex - m.globalOffset
 	if localIndex < 0 || localIndex >= m.total() {
-		return RealBlockInfo{}, 0, fmt.Errorf("ipfsproof: local index %d out of range [0,%d)", localIndex, m.total())
+		return 0, 0, fmt.Errorf("ipfsproof: index %d out of range [%d,%d)", globalIndex, m.globalOffset, m.globalOffset+m.total())
 	}
 	i := sort.Search(len(m.blocks), func(i int) bool { return m.prefix[i+1] > localIndex })
-	return m.blocks[i], localIndex - m.prefix[i], nil
+	return i, localIndex - m.prefix[i], nil
+}
+
+// resolve maps a global super-block index to the real block it falls in and
+// its zero-based super-block offset within that real block.
+func (m *rootManifest) resolve(globalIndex int) (RealBlockInfo, int, error) {
+	i, offset, err := m.resolveIndex(globalIndex)
+	if err != nil {
+		return RealBlockInfo{}, 0, err
+	}
+	return m.blocks[i], offset, nil
+}
+
+// ResolveSuperBlockRange computes, for the super-block index range [start,end)
+// over manifest (chunked-protocol virtualization at superBlockSize), the
+// real-block index range [realBlockStart,realBlockEnd) that covers it, plus
+// superBlockOffset — the cumulative super-block count of every real block
+// before realBlockStart. superBlockOffset is what a caller needs to
+// translate a global super-block index g (start <= g < end) into one local
+// to manifest[realBlockStart:realBlockEnd]: g - superBlockOffset.
+//
+// This exists for planning-time use: the only point a partitioned tag job
+// has the full manifest in memory at once. Precomputing each partition's
+// real-block range there lets a partition worker later fetch (e.g. via a
+// ranged blob read) only manifest[realBlockStart:realBlockEnd] instead of
+// the whole file's manifest, while still resolving super-block indices
+// correctly even though a super-block range can cut across real-block
+// boundaries.
+func ResolveSuperBlockRange(manifest []RealBlockInfo, superBlockSize, start, end int) (realBlockStart, realBlockEnd, superBlockOffset int, err error) {
+	m := newRootManifest(cid.Undef, manifest, superBlockSize)
+	if start < 0 || end <= start || end > m.total() {
+		return 0, 0, 0, fmt.Errorf("ipfsproof: ResolveSuperBlockRange: invalid range [%d,%d) for total %d", start, end, m.total())
+	}
+	firstIdx, _, err := m.resolveIndex(start)
+	if err != nil {
+		return 0, 0, 0, err
+	}
+	lastIdx, _, err := m.resolveIndex(end - 1)
+	if err != nil {
+		return 0, 0, 0, err
+	}
+	return firstIdx, lastIdx + 1, m.prefix[firstIdx], nil
 }
 
 // blockByteSource abstracts where superBlockStore fetches real content-block
@@ -266,14 +331,14 @@ func (s *superBlockStore) IDs() [][]byte {
 	ids := make([][]byte, 0, s.Len())
 	for _, m := range s.manifests {
 		for i := 0; i < m.total(); i++ {
-			ids = append(ids, SuperBlockID(m.root, uint64(i)))
+			ids = append(ids, SuperBlockID(m.root, uint64(m.globalOffset+i)))
 		}
 	}
 	return ids
 }
 
 func (s *superBlockStore) Block(id []byte) ([]byte, error) {
-	root, localIndex, err := ParseSuperBlockID(id)
+	root, globalIndex, err := ParseSuperBlockID(id)
 	if err != nil {
 		return nil, err
 	}
@@ -281,7 +346,7 @@ func (s *superBlockStore) Block(id []byte) ([]byte, error) {
 	if !ok {
 		return nil, fmt.Errorf("ipfsproof: superBlockStore: unknown root %s", root)
 	}
-	info, offset, err := m.resolve(int(localIndex))
+	info, offset, err := m.resolve(int(globalIndex))
 	if err != nil {
 		return nil, err
 	}
