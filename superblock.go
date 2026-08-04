@@ -66,6 +66,15 @@ type RealBlockInfo struct {
 // storage. A distinct type from TagList — Ateniese/Erway/BJO's TagList,
 // cidStore, ChallengedList, TagRoot, and NewChallengedList are unaffected by
 // anything in this file.
+//
+// pinion-prover no longer writes this as the durable storage format for a
+// tagged root's tags (see its partitioned tag-blob format, addressed via
+// line.TagStore, plus a separate permanent manifest) — this type now exists
+// only to read roots tagged before that change, until they're retagged.
+// SuperBlockSize-virtualized protocols (SW-Priv, SW-Pub) are never reachable
+// through pinion-prover's client-driven Register path, so there is no
+// still-active writer of this shape the way there is for the non-chunked
+// TagList (see TagList's own doc comment).
 type ChunkedTagList struct {
 	Root           cid.Cid
 	Blocks         []RealBlockInfo // ordered manifest, CID-sorted (same order as the DAG walk)
@@ -307,16 +316,37 @@ type superBlockStore struct {
 	byRoot         map[cid.Cid]*rootManifest
 	src            blockByteSource
 	superBlockSize int
+	// idPrefix[k] is the position in this store's own IDs() ordering (not to
+	// be confused with any manifest's globalOffset) that manifests[k] starts
+	// at — lets IDAt resolve a position to its owning manifest in O(log k)
+	// instead of IDs() rebuilding every manifest's full id list to find one.
+	idPrefix []int
 }
 
-var _ blocks.BlockStore = (*superBlockStore)(nil)
+var (
+	_ blocks.BlockStore        = (*superBlockStore)(nil)
+	_ blocks.IndexedBlockStore = (*superBlockStore)(nil)
+)
 
 func newSuperBlockStore(manifests []*rootManifest, src blockByteSource, superBlockSize int) *superBlockStore {
 	byRoot := make(map[cid.Cid]*rootManifest, len(manifests))
-	for _, m := range manifests {
+	idPrefix := make([]int, len(manifests)+1)
+	for i, m := range manifests {
 		byRoot[m.root] = m
+		idPrefix[i+1] = idPrefix[i] + m.total()
 	}
-	return &superBlockStore{manifests: manifests, byRoot: byRoot, src: src, superBlockSize: superBlockSize}
+	return &superBlockStore{manifests: manifests, byRoot: byRoot, src: src, superBlockSize: superBlockSize, idPrefix: idPrefix}
+}
+
+// IDAt implements blocks.IndexedBlockStore: resolves position idx (in this
+// store's own IDs() ordering, which concatenates each manifest's super-block
+// range in turn) to its owning manifest and computes that one SuperBlockID
+// directly, without rebuilding every manifest's full id list.
+func (s *superBlockStore) IDAt(idx int) []byte {
+	k := sort.Search(len(s.manifests), func(i int) bool { return s.idPrefix[i+1] > idx })
+	m := s.manifests[k]
+	local := idx - s.idPrefix[k]
+	return SuperBlockID(m.root, uint64(m.globalOffset+local))
 }
 
 func (s *superBlockStore) Len() int {

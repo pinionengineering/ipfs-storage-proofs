@@ -60,8 +60,9 @@ func (s *cidStore) SetBlock(_ []byte, _ []byte) error {
 
 // Compile-time interface checks.
 var (
-	_ blocks.BlockStore = (*ChallengedList)(nil)
-	_ CIDBlockStore     = (*cidStore)(nil)
+	_ blocks.BlockStore        = (*ChallengedList)(nil)
+	_ blocks.IndexedBlockStore = (*ChallengedList)(nil)
+	_ CIDBlockStore            = (*cidStore)(nil)
 )
 
 // TagBlock pairs a storage-proof tag with the IPFS CID of the block it authenticates.
@@ -72,6 +73,16 @@ type TagBlock struct {
 
 // TagList holds all TagBlocks for a single IPFS DAG, ordered by CID,
 // and records the root CID of that DAG.
+//
+// pinion-prover's partitioned worker pipeline no longer writes this as the
+// durable storage format for a tagged root's tags (see its partitioned
+// tag-blob format, addressed via line.TagStore, plus a separate permanent
+// manifest) — for roots tagged that way, this type is now only used to read
+// roots tagged before that change, until they're retagged. It is still
+// actively written by pinion-prover's client-driven Register path (Ateniese
+// only, self-tagged, small-scale), which deliberately keeps this dense shape
+// rather than going through partitioning — see storeProofMaterialLegacyDense
+// in pinion-prover.
 type TagList struct {
 	Tags []TagBlock
 	Root cid.Cid
@@ -96,6 +107,11 @@ func (cl *ChallengedList) IDs() [][]byte {
 	}
 	return ids
 }
+
+// IDAt implements blocks.IndexedBlockStore: a single position's identifier
+// without rebuilding IDs()'s full slice — an audit challenge only ever needs
+// a handful of positions, not all of them.
+func (cl *ChallengedList) IDAt(idx int) []byte { return cl.tagBlocks[idx].Cid.Bytes() }
 
 func (cl *ChallengedList) Block(id []byte) ([]byte, error) {
 	pos, ok := cl.index[string(id)]
