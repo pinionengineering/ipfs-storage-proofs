@@ -6,7 +6,7 @@ require (
 	github.com/ipfs/boxo v0.42.1
 	github.com/ipfs/go-cid v0.6.2
 	github.com/ipfs/go-ipld-format v0.6.4
-	github.com/pinionengineering/storage-proofs v0.0.0-20260804010444-25c158f0adcb
+	github.com/pinionengineering/storage-proofs v0.0.0-20260820032827-3dd3ee4fb83d
 )
 
 require (

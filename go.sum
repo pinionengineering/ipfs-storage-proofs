@@ -145,6 +145,8 @@ github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 h1:C3w9PqII01/Oq
 github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822/go.mod h1:+n7T8mK8HuQTcFwEeznm/DIxMOiR9yIdICNftLE1DvQ=
 github.com/pinionengineering/storage-proofs v0.0.0-20260804010444-25c158f0adcb h1:9DOTXTtlBlMmN2Xrle+F7My8adUdmWGbOce3nBxkzDI=
 github.com/pinionengineering/storage-proofs v0.0.0-20260804010444-25c158f0adcb/go.mod h1:+Jcuns3neGmWHerdrCEVnBe1FrzG1qgkq97NEZoa49U=
+github.com/pinionengineering/storage-proofs v0.0.0-20260820032827-3dd3ee4fb83d h1:SstxGmOCqCqwbqk75t9l2u7f4KpE7w8BFgl2cnhZVx8=
+github.com/pinionengineering/storage-proofs v0.0.0-20260820032827-3dd3ee4fb83d/go.mod h1:+Jcuns3neGmWHerdrCEVnBe1FrzG1qgkq97NEZoa49U=
 github.com/pmezard/go-difflib v1.0.0 h1:4DBwDE0NGyQoBHbLQYPwSUPoCMWR5BEzIk/f1lZbAQM=
 github.com/pmezard/go-difflib v1.0.0/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=
 github.com/polydawn/refmt v0.90.0 h1:58BfEsP+G4uIRD9ApJTFsag+Mw+QQlZuH9uI/lPmjfY=
